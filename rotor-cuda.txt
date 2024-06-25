@@ -1,0 +1,31 @@
+!pip3 install bit && pip3 install ice && pip3 install argparse && pip3 install base58 && pip3 install bitcoin && pip3 install pub && pip3 install requests /// !pip3 install cryptography && pip3 install bitcoinlib && pip3 install ecdsa / !pip3 install Macros && pip3 install PySimpleGUI && pip3 install requests && pip3 install hdwallet && pip3 install bip_utils && pip3 install multiprocessing // pip3 install fastecdsa  //    !wormhole send plutushybrid.zip !wormhole receive 6-designing-tempest     //. !sudo apt install libgmp-dev -y && apt install build-essential -y && apt install libssl-dev -y && apt install libgmp-dev -y && apt-get install libgmp3-dev -y
+!pip3 install magic-wormhole && pip3 install hdwallet && pip3 install mnemonic && pip3 install bip32utils && pip3 install bip_utils && pip3 install starkbank-ecdsa==0.1.4
+!pip install bit && pip install ice && pip install argparse && pip install base58 && pip install bitcoin && pip install pub && pip install requests
+https://colab.research.google.com/drive/1osg7lcJhXcqhNoa0R6uSlkvjGQ3FnXY6#scrollTo=bdjzZUVGD6cW
+https://github.com/Hashininirasha/Google-Colab---CUDA/blob/main/Introduction%20to%20GPGPU%20with%20CUDA.ipynb
+https://colab.research.google.com/drive/1MVuk95mMg4ecGyUAIG94vedF81HtWQAr?usp=sharing
+
+-----  GPU 1 single  ---- ./Rotor -g --gpui 0 --gpux 256,256 -m address --range 100000000000000000:1fffffffffffffffff 19vkiEajfhuZ8bs8Zu2jgmC6oqZbWqhxhG -o Found.txt
+google colab - !cd drive/MyDrive/bsgs/v6_dll_bsgs && python3 bsgs_create_bpfile_bloomfile.py 2000000000 bpfile.bin bloomfile.bin 4
+
+key-hunt-cuda colab !cd drive && cd MyDrive && cd KeyHunt-5 && cd KeyHunt-Cuda-2 && ./KeyHunt -g --gpui 0 --gpux 256,256 -s 22a00000000000000 -e 1f765a8aa43b31089f667d87fbfc8e83ba3739cc8a13540777fa4bd19a06c181 -b -f hash160_out_sorted.bin -o Found.txt
+key-hunt-cuda colab !cd drive && cd MyDrive && cd KeyHunt-5 && cd KeyHunt-Cuda-2 && ./KeyHunt -g --gpui 0 -s 22a00000000000000 -e 1f765a8aa43b31089f667d87fbfc8e83ba3739cc8a13540777fa4bd19a06c181 -b -f hash160_out_sorted.bin -o Found.txt
+
+!cd /content/drive/MyDrive && ls
+!cd /content/drive/MyDrive && unzip rotor-cuda.zip
+!cd /content/drive/MyDrive/Linux && chmod +x *
+!apt install cuda-cudart-11-8 -y
+ 
+
+
+!cd /content/drive/MyDrive/Linux && ./Rotor -g --gpui 0 --gpux 256,256 -m address --coin BTC --range 20000000000000000:2ffffffffffffffff 13zb1hQbWVsc2S7ZTZnP2G4undNNpdh5so -o Found.txt -r 1
+!cd /content/drive/MyDrive/Linux && ./Rotor -g --gpui 0 --gpux 256,256 -m address --coin BTC --range 30000000000000000:3ffffffffffffffff 13zb1hQbWVsc2S7ZTZnP2G4undNNpdh5so -o Found.txt -r 1
+!cd /content/drive/MyDrive/Linux && ./Rotor -g --gpui 0 --gpux 256,256 -m address --coin BTC --range 20000000000000000:3ffffffffffffffff 13zb1hQbWVsc2S7ZTZnP2G4undNNpdh5so -o Found.txt -r 1
+
+!cd /content/drive/MyDrive/temp/Rotor-Cuda && cd Linux && ./Rotor -g --gpui 0 --gpux 256,256 -m address --coin BTC --range 101201011410110111:1feeffde9aeeffedbf 19vkiEajfhuZ8bs8Zu2jgmC6oqZbWqhxhG -o Found.txt -r 1
+
+
+https://julialang.org/learning/tryjulia/ nadal2023nadal@gmail.com PRIVATEKEYTOWIF.zip
+
+
+
