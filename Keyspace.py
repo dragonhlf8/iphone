@@ -13,16 +13,16 @@ except ImportError:
     subprocess.check_call(["python3", '-m', 'pip', 'install', 'bitcoin'])
 
 while True:  
-    low  = 0x20000000000000000
-    high = 0x3ffffffffffffffff
+    low  = 0x100000000000000000
+    high = 0x1fffffffffffffffff
     val = str ( hex ( random.randrange( low, high ) ) )[2:]
-    result = val.rjust(47 + len(val), '0')
+    result = val.rjust(46 + len(val), '0')
     priv = result
     pub = privtopub(priv)
     pubkey1 = encode_pubkey(privtopub(priv), "bin_compressed")
     addr = pubtoaddr(pubkey1)
     n = addr
-    if n.startswith('13zb1hQbWVsc2S7ZTZnP2G4undNNpdh'):
+    if n.startswith('19vkiEajfhuZ8bs8Zu2jgmC6oqZbWqh'):
         print ("found!!",addr,result)
         k1 = priv
         k2 = pub
