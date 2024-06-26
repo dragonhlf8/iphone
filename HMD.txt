@@ -1,0 +1,15 @@
+replit.com/@dragonhlf/AchingDiligentCron
+1NEJcwfcEm7Aax8oJNjRUnY3hEavCjNrai
+0000000000000000000000000001ffffffffffffffffffffffffffffffffffff
+000000000000000000000000000000000000000000000002ffffffffffffffff
+000000000000000000000000000000000000000000000003ffffffffffffffff
+00000000000000000000000000000000000000000000001fffffffffffffffff
+chmod +x *
+./crackbtcshell
+privatekeytowif
+0x3ffffffffffffffff
+
+python Keyspace1.py -t 2
+
+100000000000000000:
+
