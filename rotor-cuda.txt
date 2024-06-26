@@ -16,7 +16,9 @@ key-hunt-cuda colab !cd drive && cd MyDrive && cd KeyHunt-5 && cd KeyHunt-Cuda-2
 !cd /content/drive/MyDrive/Linux && chmod +x *
 !apt install cuda-cudart-11-8 -y
  
+./keyhunt -t 100 -m address -l compress -f 66.txt -r 20000000000000000:3ffffffffffffffff -S -B random -R
 
+./rotor -t 4 -m address -l compress -f 66.txt -r 20000000000000000:3ffffffffffffffff -S -B random -R
 
 !cd /content/drive/MyDrive/Linux && ./Rotor -g --gpui 0 --gpux 256,256 -m address --coin BTC --range 20000000000000000:2ffffffffffffffff 13zb1hQbWVsc2S7ZTZnP2G4undNNpdh5so -o Found.txt -r 1
 !cd /content/drive/MyDrive/Linux && ./Rotor -g --gpui 0 --gpux 256,256 -m address --coin BTC --range 30000000000000000:3ffffffffffffffff 13zb1hQbWVsc2S7ZTZnP2G4undNNpdh5so -o Found.txt -r 1
