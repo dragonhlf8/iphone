@@ -32,4 +32,4 @@ while True:
         file.write("Private key: " + k1 + '\n' + "Public key: " + k2 + '\n' + "Address: " + k3 + '\n\n')    
         file.close()
     else:
-        print ("searching...",addr,result)
+        print("\rsearching...", addr, result, end='')
