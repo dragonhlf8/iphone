@@ -13,16 +13,16 @@ except ImportError:
     subprocess.check_call(["python3", '-m', 'pip', 'install', 'bitcoin'])
 
 while True:  
-    low  = 0x800
-    high = 0xfff
+    low  = 0x100000000000000000
+    high = 0x1fffffffffffffffff
     val = str ( hex ( random.randrange( low, high ) ) )[2:]
-    result = val.rjust(61 + len(val), '0')
+    result = val.rjust(46 + len(val), '0')
     priv = result
     pub = privtopub(priv)
     pubkey1 = encode_pubkey(privtopub(priv), "bin_compressed")
     addr = pubtoaddr(pubkey1)
     n = addr
-    if n.startswith('1DBaumZxUkM4qMQRt2LVWyFJq5kDtSZ'):
+    if n.startswith('19vkiEajfhuZ8bs8Zu2jgmC6oqZbWqh'):
         print ("found!!",addr,result)
         k1 = priv
         k2 = pub
@@ -32,4 +32,4 @@ while True:
         file.write("Private key: " + k1 + '\n' + "Public key: " + k2 + '\n' + "Address: " + k3 + '\n\n')    
         file.close()
     else:
-        print("\033[F\033[Ksearching...", addr, result, end='', flush=True)
+        print("\rsearching...", addr, result, end='')
