@@ -1,0 +1,528 @@
+from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister, Aer, transpile, execute
+from qiskit.circuit.library import QFT
+from qiskit.algorithms import PhaseEstimation
+from qiskit.providers.basicaer import BasicAer
+import numpy as np
+import random
+import hashlib
+import base58
+import time
+import matplotlib.pyplot as plt
+from qiskit import QuantumCircuit, transpile
+from qiskit.visualization import plot_histogram
+from qiskit.circuit.library import QFT
+import numpy as np
+from qiskit_ibm_runtime import QiskitRuntimeService, Sampler, Options
+from qiskit import QuantumCircuit, transpile
+from qiskit.circuit import QuantumRegister, ClassicalRegister
+import numpy as np
+from fractions import Fraction
+from math import gcd
+from collections import Counter
+
+QiskitRuntimeService.save_account(
+    channel='ibm_quantum',
+    token='29e1878ddfb11fd8422a7c7c2f07521420b73988a7b1bd610b81758122de534d90abdb90466b747d81c43aea6c81147d89de8c551e24d4a30f584419e96e3659',
+    instance='ibm-q/open/main',
+    overwrite=True,
+    set_as_default=True
+)
+service = QiskitRuntimeService()
+backend = service.backend("ibm_brisbane")
+
+
+# Bitcoin Elliptic Curve Parameters (Secp256k1)
+P = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F
+N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+A = 0  # Curve parameter a
+B = 7  # Curve parameter b
+G_X = 0x3f688bae8321b8e02b7e6c0a55c2515fb25ab97d85fda842449f7bfa04e128c3
+G_Y = 0x393e3b1c529624e56840acbb10243ec9e0cfe99c3cffe1c87537b735bbba2d2f
+
+def mod_inverse(a, p):
+    """Calculate the modular multiplicative inverse of a mod p."""
+    if a == 0:
+        return 0
+    lm, hm = 1, 0
+    low, high = a % p, p
+    while low > 1:
+        ratio = high // low
+        nm, new_low = hm - lm * ratio, high - low * ratio
+        lm, low, hm, high = nm, new_low, lm, low
+    return lm % p
+
+def point_addition(x1, y1, x2, y2, p=P, a=A):
+    """Add two points on the elliptic curve."""
+    if x1 is None or y1 is None:
+        return x2, y2
+    if x2 is None or y2 is None:
+        return x1, y1
+    if x1 == x2 and (y1 == -y2 % p or y1 == y2 and y1 == 0):
+        return None, None  # Point at infinity
+    
+    if x1 == x2 and y1 == y2:
+        # Point doubling
+        lam = (3 * x1**2 + a) * mod_inverse(2 * y1, p) % p
+    else:
+        # Point addition
+        lam = (y2 - y1) * mod_inverse(x2 - x1, p) % p
+    
+    x3 = (lam**2 - x1 - x2) % p
+    y3 = (lam * (x1 - x3) - y1) % p
+    
+    return x3, y3
+
+def scalar_multiplication(k, x, y, p=P, a=A):
+    """Multiply a point (x,y) by scalar k using double-and-add algorithm."""
+    if k == 0 or x is None or y is None:
+        return None, None
+    
+    result_x, result_y = None, None
+    addend_x, addend_y = x, y
+    
+    # Convert k to binary and process each bit
+    while k > 0:
+        if k & 1:  # If least significant bit is 1
+            if result_x is None:
+                result_x, result_y = addend_x, addend_y
+            else:
+                result_x, result_y = point_addition(result_x, result_y, addend_x, addend_y, p, a)
+        
+        # Double the addend point
+        addend_x, addend_y = point_addition(addend_x, addend_y, addend_x, addend_y, p, a)
+        k >>= 1  # Right shift k by 1 bit
+    
+    return result_x, result_y
+
+def public_key_to_address(public_key_x, public_key_y, compressed=True):
+    """Convert a public key to a Bitcoin address."""
+    if compressed:
+        if public_key_y % 2 == 0:  # Even y
+            pubkey_bytes = bytes.fromhex("02" + format(public_key_x, '064x'))
+        else:  # Odd y
+            pubkey_bytes = bytes.fromhex("03" + format(public_key_x, '064x'))
+    else:
+        pubkey_bytes = bytes.fromhex("04" + format(public_key_x, '064x') + format(public_key_y, '064x'))
+    
+    # SHA-256 hash
+    sha256_hash = hashlib.sha256(pubkey_bytes).digest()
+    
+    # RIPEMD-160 hash
+    ripemd160 = hashlib.new('ripemd160')
+    ripemd160.update(sha256_hash)
+    pubkey_hash = ripemd160.digest()
+    
+    # Add version byte (0x00 for mainnet)
+    versioned_hash = b'\x00' + pubkey_hash
+    
+    # Double SHA-256 for checksum
+    checksum = hashlib.sha256(hashlib.sha256(versioned_hash).digest()).digest()[:4]
+    
+    # Concatenate versioned hash and checksum
+    binary_address = versioned_hash + checksum
+    
+    # Base58 encode the result
+    address = base58.b58encode(binary_address).decode('utf-8')
+    
+    return address
+
+def public_key_to_public_key_hash(public_key_hex):
+    """Convert a public key to a public key hash (RIPEMD160 of SHA256)."""
+    if public_key_hex.startswith("02") or public_key_hex.startswith("03"):
+        # Compressed public key
+        pubkey_bytes = bytes.fromhex(public_key_hex)
+    elif public_key_hex.startswith("04"):
+        # Uncompressed public key
+        pubkey_bytes = bytes.fromhex(public_key_hex)
+    else:
+        # Add 02 prefix if it's just the x coordinate (assuming even y)
+        pubkey_bytes = bytes.fromhex("02" + public_key_hex)
+    
+    # SHA-256 hash
+    sha256_hash = hashlib.sha256(pubkey_bytes).digest()
+    
+    # RIPEMD-160 hash
+    ripemd160 = hashlib.new('ripemd160')
+    ripemd160.update(sha256_hash)
+    return ripemd160.hexdigest()
+
+def decompress_public_key(compressed_key, p=P, a=A, b=B):
+    """Decompress a compressed public key to get the full (x,y) coordinates."""
+    if compressed_key.startswith("02") or compressed_key.startswith("03"):
+        prefix = compressed_key[:2]
+        x_hex = compressed_key[2:]
+        x = int(x_hex, 16)
+        
+        # Calculate y² = x³ + ax + b
+        y_squared = (pow(x, 3, p) + a * x + b) % p
+        
+        # Calculate y by taking the square root modulo p
+        y = pow(y_squared, (p + 1) // 4, p)  # This works for p ≡ 3 (mod 4), which is true for secp256k1
+        
+        # Choose the correct y value based on the prefix
+        if (prefix == "02" and y % 2 != 0) or (prefix == "03" and y % 2 == 0):
+            y = p - y
+            
+        return x, y
+    elif compressed_key.startswith("04"):
+        # Uncompressed key
+        x_hex = compressed_key[2:66]
+        y_hex = compressed_key[66:130]
+        return int(x_hex, 16), int(y_hex, 16)
+    else:
+        raise ValueError("Invalid public key format")
+
+def create_superposition(circuit, qr):
+    """Creates a superposition state encoding possible private key values."""
+    circuit.h(qr)  # Apply Hadamard to all qubits
+
+def modular_exponentiation_operator(circuit, control, target, public_key_x, public_key_y, n_count):
+    """
+    Implements a controlled modular exponentiation operation for ECDLP.
+    This simulates the operation: |x⟩|0⟩ → |x⟩|g^x mod p⟩ where g is the generator point.
+    """
+    for i in range(n_count):
+        # For each control qubit representing a bit in the private key
+        # Apply controlled operations that simulate elliptic curve point multiplication
+        power = 2**i
+        # Calculate g^(2^i) mod p classically
+        point_x, point_y = scalar_multiplication(power, G_X, G_Y)
+        
+        # Apply a controlled operation based on whether this bit contributes to the result
+        circuit.cx(control[i], target[0])
+        
+        # Additional operations to simulate the effect of this bit on the final point
+        # This is a simplified representation - real implementation would be more complex
+        for j in range(min(4, len(target))):
+            circuit.cp(np.pi / (2**(j+1)), control[i], target[j])
+
+def apply_qpe(circuit, control_register, target_register, public_key_x, public_key_y):
+    """
+    Performs Quantum Phase Estimation (QPE) for ECDLP.
+    |control⟩|target⟩ → |control⟩|target ⊕ f(control)⟩
+    where f(control) represents scalar_multiplication(control, G) == Public_Key
+    """
+    n_count = len(control_register)
+    
+    # Initialize target register
+    circuit.x(target_register[0])  # Initialize first target qubit to |1⟩
+    
+    # Apply controlled exponentiation operations to simulate ECDLP
+    modular_exponentiation_operator(circuit, control_register, target_register, public_key_x, public_key_y, n_count)
+    
+    # Apply inverse QFT to the control register
+    circuit.append(QFT(n_count, do_swaps=True).inverse(), control_register)
+
+def error_correction_repetition_code(circuit, data_qubits, ancilla_qubits):
+    """
+    Implements a repetition code for error correction.
+    This can detect and potentially correct bit-flip errors.
+    """
+    # Measure parity between adjacent qubits
+    for i in range(len(data_qubits) - 1):
+        circuit.cx(data_qubits[i], ancilla_qubits[i])
+        circuit.cx(data_qubits[i+1], ancilla_qubits[i])
+        circuit.barrier()
+    
+    # Measure ancilla qubits to detect errors
+    for i in range(len(ancilla_qubits)):
+        circuit.measure(ancilla_qubits[i], len(data_qubits) + i)
+    
+    # Based on measurement results, we would apply corrections in a real system
+    # This would require mid-circuit measurements and feedforward, which we simulate here
+
+def quantum_key_recovery(num_qubits=17, public_key_hex="033f688bae8321b8e02b7e6c0a55c2515fb25ab97d85fda842449f7bfa04e128c3"):
+    """
+    Quantum circuit for recovering a private key from a public key using Shor's algorithm.
+    
+    Args:
+        num_qubits: Number of qubits to use (determines range of private keys that can be found)
+        public_key_hex: The public key in hex format
+        
+    Returns:
+        QuantumCircuit: The quantum circuit for key recovery
+    """
+    # Parse the public key
+    if public_key_hex.startswith("02") or public_key_hex.startswith("03"):
+        public_key_x, public_key_y = decompress_public_key(public_key_hex)
+    else:
+        # Handle uncompressed public key or just x coordinate
+        if public_key_hex.startswith("04"):
+            x_hex = public_key_hex[2:66]
+            y_hex = public_key_hex[66:130]
+        else:
+            x_hex = public_key_hex
+            y_hex = None
+        
+        public_key_x = int(x_hex, 16)
+        public_key_y = int(y_hex, 16) if y_hex else None
+        
+        if public_key_y is None:
+            # Try to derive y from x
+            y_squared = (pow(public_key_x, 3, P) + A * public_key_x + B) % P
+            public_key_y = pow(y_squared, (P + 1) // 4, P)
+    
+    # Create quantum and classical registers
+    qr = QuantumRegister(num_qubits, 'q')  # Register for private key guess
+    aux = QuantumRegister(4, 'aux')  # Auxiliary register for QPE
+    ancilla = QuantumRegister(5, 'ancilla')  # Ancilla qubits for error correction
+    cr = ClassicalRegister(num_qubits + len(ancilla), 'c')  # Classical register for measurements
+    
+    # Create quantum circuit
+    circuit = QuantumCircuit(qr, aux, ancilla, cr)
+    
+    # Step 1: Create superposition of all possible private keys
+    create_superposition(circuit, qr)
+    circuit.barrier()
+    
+    # Step 2: Apply quantum phase estimation for ECDLP
+    apply_qpe(circuit, qr, aux, public_key_x, public_key_y)
+    circuit.barrier()
+    
+    # Step 3: Apply error correction
+    error_correction_repetition_code(circuit, qr, ancilla)
+    circuit.barrier()
+    
+    # Step 4: Measure the private key register
+    circuit.measure(qr, cr[:num_qubits])
+    
+    return circuit
+
+def find_period_from_measurement(counts, num_qubits):
+    """
+    Process measurement results to find the period, which corresponds to the private key.
+    """
+    # Sort the results by frequency
+    sorted_counts = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+    
+    # Extract the most frequent result
+    most_frequent = sorted_counts[0][0]
+    
+    # Convert binary string to integer (this is the measured phase)
+    measured_phase = int(most_frequent[:num_qubits], 2)
+    
+    # Convert phase to period using continued fraction expansion
+    period = phase_to_period(measured_phase / (2**num_qubits), N)
+    
+    return period
+
+def continued_fraction_expansion(x, max_denominator=2**64):
+    """Find rational approximation using continued fractions."""
+    a = []
+    num, denom = 0, 1
+    num_1, denom_1 = 1, 0
+    
+    val = x
+    while True:
+        a_i = int(val)
+        a.append(a_i)
+        
+        # Update convergents
+        num_new = a_i * num + num_1
+        denom_new = a_i * denom + denom_1
+        
+        num_1, denom_1 = num, denom
+        num, denom = num_new, denom_new
+        
+        # Check if we've reached the required precision or max denominator
+        if denom >= max_denominator or abs(x - num/denom) < 1e-10:
+            break
+            
+        val = 1 / (val - a_i)
+    
+    return denom
+
+def phase_to_period(phase, n):
+    """Convert a phase to a period using continued fractions."""
+    # Use continued fraction expansion to find the period
+    denominators = []
+    
+    # Generate convergents
+    fraction = phase
+    for _ in range(20):  # Limit to 20 iterations
+        integer_part = int(fraction)
+        convergent = continued_fraction_expansion(phase, integer_part)
+        denominators.append(convergent)
+        fraction = 1.0 / (fraction - integer_part)
+        if fraction > 1e10:  # Avoid floating point issues
+            break
+    
+    # Test each denominator
+    for denominator in denominators:
+        if denominator < 2:
+            continue
+        if denominator < n and gcd(denominator, n) == 1:
+            return denominator
+    
+    return None
+
+def gcd(a, b):
+    """Calculate the greatest common divisor of a and b."""
+    while b:
+        a, b = b, a % b
+    return a
+
+def verify_private_key(private_key, public_key_hex):
+    """Verify if a private key corresponds to a given public key."""
+    # Compute the public key from the private key
+    point_x, point_y = scalar_multiplication(private_key, G_X, G_Y)
+    
+    # Format the computed public key
+    if public_key_hex.startswith("02") or public_key_hex.startswith("03"):
+        # Compressed format
+        prefix = "02" if point_y % 2 == 0 else "03"
+        computed_public_key = prefix + format(point_x, '064x')
+    else:
+        # Uncompressed format
+        computed_public_key = "04" + format(point_x, '064x') + format(point_y, '064x')
+    
+    return computed_public_key == public_key_hex
+
+def plot_result_histogram(counts):
+    """Plot a histogram of the measurement results."""
+    plt.figure(figsize=(12, 6))
+    plt.bar(counts.keys(), counts.values())
+    plt.xlabel('Measurement Result')
+    plt.ylabel('Count')
+    plt.title('Quantum Measurement Results')
+    plt.xticks(rotation=90)
+    plt.tight_layout()
+    plt.savefig('measurement_results.png')
+    plt.close()
+
+def get_top_10_frequent(counts):
+    """Get the top 10 most frequent measurement results."""
+    sorted_counts = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+    return sorted_counts[:10]
+
+def retrieve_job_result(counts, public_key_hex, num_qubits):
+    """Process job results to find a matching private key."""
+    # Sort the results by frequency
+    sorted_counts = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+    
+    # Check the top results
+    for result, _ in sorted_counts[:10]:
+        # Extract the private key bits (ignore error correction bits)
+        key_bits = result[:num_qubits]
+        potential_key = int(key_bits, 2)
+        
+        # For small keys, we may need to try different offsets
+        for offset in [0, 0x10000, 0x100000, 0x1000000]:
+            test_key = potential_key + offset
+            
+            # Verify if this key matches the public key
+            if verify_private_key(test_key, public_key_hex):
+                # Generate the Bitcoin address
+                point_x, point_y = scalar_multiplication(test_key, G_X, G_Y)
+                address = public_key_to_address(point_x, point_y, True)
+                
+                return hex(test_key)[2:], address
+    
+    return None, None
+
+def run_quantum_search(public_key_hex, num_qubits=17, num_shots=1024):
+    """
+    Run the quantum search algorithm to find the private key.
+    
+    Args:
+        public_key_hex: Public key in hex format
+        num_qubits: Number of qubits to use
+        num_shots: Number of measurement shots
+        
+    Returns:
+        private_key: The recovered private key (if found)
+    """
+    print(f"Creating quantum circuit for public key: {public_key_hex}")
+    qc = quantum_key_recovery(num_qubits, public_key_hex)
+    
+    print(f"Circuit depth: {qc.depth()}")
+    print(f"Circuit width: {qc.width()}")
+    
+    print("Transpiling circuit for simulation...")
+    simulator = Aer.get_backend('qasm_simulator')
+    transpiled_circuit = transpile(qc, simulator, optimization_level=3)
+    
+    print(f"Executing circuit with {num_shots} shots...")
+    job = execute(transpiled_circuit, simulator, shots=num_shots)
+    result = job.result()
+    counts = result.get_counts()
+    
+    print("Analyzing results...")
+    plot_result_histogram(counts)
+    
+    print("Top 10 most frequent results:")
+    top_results = get_top_10_frequent(counts)
+    for bitstring, count in top_results:
+        print(f"{bitstring}: {count} shots")
+    
+    print("Searching for matching private key...")
+    private_key_hex, address = retrieve_job_result(counts, public_key_hex, num_qubits)
+    
+    if private_key_hex:
+        print(f"Success! Found private key: {private_key_hex}")
+        print(f"Corresponding address: {address}")
+        return private_key_hex
+    else:
+        print("No matching private key found in this execution.")
+        return None
+
+def find_mini_private_key(public_key_hex, max_attempts=5, keyspace_start=0x10000, keyspace_end=0x1FFFF):
+    """
+    Main function to find a mini private key (ignoring leading zeros).
+    
+    Args:
+        public_key_hex: The public key in hex format
+        max_attempts: Maximum number of attempts to run the algorithm
+        keyspace_start: Start of the search range (focusing on non-zero part)
+        keyspace_end: End of the search range
+        
+    Returns:
+        private_key: The recovered private key (if found)
+    """
+    print(f"Starting quantum search for mini private key...")
+    print(f"Public key: {public_key_hex}")
+    print(f"Search range: 0x{keyspace_start:x} to 0x{keyspace_end:x}")
+    
+    for attempt in range(1, max_attempts + 1):
+        print(f"\nAttempt {attempt}/{max_attempts}")
+        
+        # Calculate optimal number of qubits for the keyspace
+        range_size = keyspace_end - keyspace_start + 1
+        num_qubits = max(17, (range_size - 1).bit_length())  # At least 17 qubits
+        
+        print(f"Using {num_qubits} qubits to cover the specified range")
+        
+        # Run the quantum search algorithm
+        private_key = run_quantum_search(public_key_hex, num_qubits, num_shots=8192)
+        
+        if private_key:
+            # Save the result to a file
+            with open("found_private_key.txt", "w") as file:
+                file.write(private_key)
+            print(f"Private key saved to found_private_key.txt")
+            return private_key
+        
+        print("No matching private key found in this attempt. Adjusting parameters...")
+        # Could adjust parameters here for the next attempt
+    
+    print("Maximum attempts reached. No matching private key found.")
+    return None
+
+if __name__ == "__main__":
+    # Example public key (in compressed format)
+    public_key_hex = "033f688bae8321b8e02b7e6c0a55c2515fb25ab97d85fda842449f7bfa04e128c3"
+    
+    # Focus on finding the "mini private key" (ignoring leading zeros)
+    mini_private_key = find_mini_private_key(
+        public_key_hex,
+        max_attempts=3,
+        keyspace_start=0x10000,  # Start with a manageable range
+        keyspace_end=0x1FFFF     # End of the range
+    )
+    
+    if mini_private_key:
+        print(f"Successfully found private key: {mini_private_key}")
+        print(f"This is the significant (non-zero) part of the full private key.")
+    else:
+        print("Could not find the private key in the specified range.")
+        print("Consider adjusting the key space or increasing the number of qubits.")

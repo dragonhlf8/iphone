@@ -1,0 +1,265 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+SAFE demo: QPE pipeline that attempts to recover a PRIVATE KEY YOU SUPPLY.
+This script will NOT attempt to recover unknown/third-party private keys.
+You MUST set USER_PRIVATE_KEY to a private key you own and permit testing.
+By default uses the Aer simulator (recommended). You may enable IBM runtime manually.
+"""
+
+import numpy as np
+from math import ceil, gcd
+from fractions import Fraction
+from qiskit import QuantumCircuit, transpile, Aer, assemble
+from qiskit.circuit.library import QFT
+from qiskit.visualization import plot_histogram
+
+# ---------------------------
+# secp256k1 classical (kept for completeness)
+# ---------------------------
+p = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F
+a = 0
+b = 7
+Gx = 55066263022277343669578718895168534326250603453777594175500187360389116729240
+Gy = 32670510020758816978083085130507043184471273380659243275938904335757337482424
+G = (Gx, Gy)
+
+def modinv(a, m=p): return pow(a, -1, m)
+def is_inf(P): return P == (None, None)
+def point_add(P, Q):
+    if is_inf(P): return Q
+    if is_inf(Q): return P
+    x1, y1 = P; x2, y2 = Q
+    if x1 == x2 and y1 != y2: return (None, None)
+    if P == Q: return point_double(P)
+    m = ((y2 - y1) * modinv(x2 - x1)) % p
+    x3 = (m*m - x1 - x2) % p
+    y3 = (m*(x1 - x3) - y1) % p
+    return (x3, y3)
+
+def point_double(P):
+    if is_inf(P): return (None, None)
+    x, y = P
+    m = ((3*x*x + a) * modinv(2*y)) % p
+    x3 = (m*m - 2*x) % p
+    y3 = (m*(x - x3) - y) % p
+    return (x3, y3)
+
+def scalar_mult(k, P):
+    R = (None, None)
+    while k > 0:
+        if k & 1:
+            R = point_add(R, P)
+        P = point_double(P)
+        k >>= 1
+    return R
+
+def compress_pubkey_point(P):
+    x, y = P
+    prefix = '02' if (y % 2 == 0) else '03'
+    return prefix + format(x, '064x')
+
+def decompress_pubkey(pubkey_hex):
+    prefix = pubkey_hex[:2]
+    x = int(pubkey_hex[2:], 16)
+    y_square = (x**3 + 7) % p
+    y = pow(y_square, (p + 1)//4, p)
+    if (y % 2 == 0 and prefix == '02') or (y % 2 == 1 and prefix == '03'):
+        return (x, y)
+    else:
+        return (x, p - y)
+
+# ---------------------------
+# Continued fraction helpers
+# ---------------------------
+def continued_fraction_expansion(x, max_iters=80):
+    terms = []
+    value = x
+    for _ in range(max_iters):
+        a = int(np.floor(value))
+        terms.append(a)
+        frac = value - a
+        if abs(frac) < 1e-15:
+            break
+        value = 1.0 / frac
+    return terms
+
+def convergents_from_cf(terms):
+    convs = []
+    for i in range(len(terms)):
+        frac = Fraction(0, 1)
+        for t in reversed(terms[:i+1]):
+            if frac.numerator == 0:
+                frac = Fraction(t, 1)
+            else:
+                frac = t + Fraction(1, frac)
+        convs.append((frac.numerator, frac.denominator))
+    return convs
+
+def approx_convergents(measured_int, n_counting, max_denominator):
+    frac_value = measured_int / (2 ** n_counting)
+    terms = continued_fraction_expansion(frac_value, max_iters=80)
+    convs = convergents_from_cf(terms)
+    return [(num, den) for num, den in convs if 0 < den <= max_denominator]
+
+# ---------------------------
+# Oracle building: phase-marking gate for a basis state on m qubits
+# ---------------------------
+def build_marking_oracle_gate(m, target_state, ancilla_count=0):
+    total = m + ancilla_count
+    qc = QuantumCircuit(total, name=f"mark_{target_state}")
+    bin_s = bin(target_state)[2:].zfill(m)
+    # Flip zeros -> ones
+    for i, bit in enumerate(bin_s):
+        if bit == '0':
+            qc.x(i)
+    if m >= 2:
+        qc.h(m - 1)
+        qc.mcx(list(range(0, m - 1)), m - 1)  # Qiskit will synthesize ancilla usage if needed
+        qc.h(m - 1)
+    else:
+        qc.z(0)
+    # Undo flips
+    for i, bit in enumerate(bin_s):
+        if bit == '0':
+            qc.x(i)
+    return qc.to_gate()
+
+# ---------------------------
+# Full QPE circuit (counting + system + optional ancilla)
+# ---------------------------
+def build_full_qpe_circuit(n_counting, m_system, target_state, oracle_ancillas=0):
+    total_qubits = n_counting + m_system + oracle_ancillas
+    qc = QuantumCircuit(total_qubits, n_counting)
+    counting_idx = list(range(0, n_counting))
+    system_idx = list(range(n_counting, n_counting + m_system))
+    ancilla_idx = list(range(n_counting + m_system, total_qubits)) if oracle_ancillas > 0 else []
+
+    # 1) Hadamard on counting
+    for q in counting_idx:
+        qc.h(q)
+
+    # 2) Prepare system register in basis state |target_state>
+    bin_s = bin(target_state)[2:].zfill(m_system)
+    for i, bit in enumerate(reversed(bin_s)):  # LSB -> lowest index in system_idx
+        if bit == '1':
+            qc.x(system_idx[i])
+
+    # 3) Build base marking oracle gate and append controlled powers
+    gate_U = build_marking_oracle_gate(m_system, target_state, ancilla_count=oracle_ancillas)
+    for j, cq in enumerate(counting_idx):
+        power = 2 ** j
+        controlled_gate = gate_U.control(1)
+        for _ in range(power):
+            qc.append(controlled_gate, [cq] + system_idx + ancilla_idx)
+
+    # 4) inverse QFT on counting
+    qc.append(QFT(n_counting, do_swaps=True, inverse=True), counting_idx)
+
+    # 5) measure counting into classical bits
+    qc.measure(counting_idx, list(range(n_counting)))
+    return qc
+
+# ---------------------------
+# Simulator runner (Aer)
+# ---------------------------
+def run_on_aer(qc, shots=4096):
+    backend = Aer.get_backend('aer_simulator')
+    tqc = transpile(qc, backend=backend, optimization_level=3)
+    qobj = assemble(tqc, shots=shots)
+    job = backend.run(qobj)
+    result = job.result()
+    return result.get_counts()
+
+# ---------------------------
+# MAIN SAFE FLOW
+# ---------------------------
+def main():
+    # ============ USER RESPONSIBILITY ============
+    # Set USER_PRIVATE_KEY to an integer YOU OWN and permit testing on.
+    # DO NOT set this to someone else's private key.
+    USER_PRIVATE_KEY = None  # <<-- Replace with int like 0x1234... ONLY if you own it.
+
+    if USER_PRIVATE_KEY is None:
+        print("ERROR: You must set USER_PRIVATE_KEY to a private key you own for testing. Aborting.")
+        return
+
+    # choose a small toy range you control; the code will represent offsets in [min_range, max_range)
+    min_range = 0x2
+    max_range = 0x40  # be conservative; larger ranges require more qubits
+    keyspace_size = max_range - min_range
+
+    # compute public key from provided private key (we use this for verification only)
+    # the script assumes USER_PRIVATE_KEY is inside the chosen range
+    if not (min_range <= USER_PRIVATE_KEY < max_range):
+        print(f"ERROR: USER_PRIVATE_KEY must be in the chosen range [{hex(min_range)}, {hex(max_range)}).")
+        return
+
+    public_point = scalar_mult(USER_PRIVATE_KEY, G)
+    public_hex = compress_pubkey_point(public_point)
+    print(f"[i] Derived public key from provided private key (for verification): {public_hex}")
+
+    # system register size (m) to represent offsets 0..keyspace_size-1
+    m = int(np.ceil(np.log2(keyspace_size)))
+    if m < 1:
+        m = 1
+
+    # counting qubits: choose precision (m + extra)
+    extra_precision = 3
+    n_counting = m + extra_precision
+
+    print(f"[i] Using system qubits m={m}, counting qubits n={n_counting} (extra precision={extra_precision})")
+
+    # compute target_state as offset
+    target_state = USER_PRIVATE_KEY - min_range
+    if target_state < 0 or target_state >= 2**m:
+        print("ERROR: target_state out of representable range for system register. Adjust ranges.")
+        return
+
+    # build QPE circuit
+    qc = build_full_qpe_circuit(n_counting, m, target_state, oracle_ancillas=0)
+    print(f"[i] Built QPE circuit: qubits={qc.num_qubits}, depth(approx)={qc.depth()}")
+
+    # run on local Aer simulator (recommended for testing)
+    shots = 4096
+    print("[i] Running on Aer simulator (recommended).")
+    counts = run_on_aer(qc, shots=shots)
+    print("[i] Counts (top results):")
+    for k, v in sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:10]:
+        print(f"  {k}: {v}")
+
+    # optional: show histogram (comment out if headless)
+    try:
+        plot_histogram(counts)
+    except Exception:
+        pass
+
+    # postprocess: gcd + continued fractions
+    sorted_counts = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
+    found = False
+    for bitstring, freq in sorted_counts:
+        measured_int = int(bitstring, 2)
+        denom = 2 ** n_counting
+        if gcd(measured_int, denom) != 1:
+            continue
+        convs = approx_convergents(measured_int, n_counting, max_denominator=keyspace_size)
+        tried = set()
+        for num, den in convs:
+            phase = num / den
+            candidate = round(phase * keyspace_size) + min_range
+            if candidate in tried:
+                continue
+            tried.add(candidate)
+            print(f"[?] Trying candidate {hex(candidate)} from phase {phase:.6f}")
+            if scalar_mult(candidate, G) == public_point:
+                print(f"[✓] SUCCESS: recovered provided private key: {hex(candidate)}")
+                found = True
+                break
+        if found:
+            break
+
+    if not found:
+        print("❌ Recovery failed with current settings (noise / precision / shots may be insufficient).")
+
+if __name__ == "__main__":
+    main()

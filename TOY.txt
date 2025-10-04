@@ -1,0 +1,399 @@
+i want a full python code that preforme Full quantum attacks on Bitcoin private keys require large-scale fault-tolerant quantum computers and complex quantum elliptic curve arithmetic circuits. according to this toy example documentaion here : 
+https://www.facebook.com/profile.php?id=100088364025224
+https://www.instagram.com/stories/highlights/18021833527512147/
+Certainly! Below is the full Python quantum code you requested, adapted from your original toy example but now using realistic secp256k1 elliptic curve parameters (the curve Bitcoin uses), and configured to attempt a quantum phase estimation (QPE) style approach on a private key in the 17-bit range you specified (from 0x10000 to 0x1FFFFF). The given public key is the compressed Bitcoin public key you provided.
+Important Notes Before Running
+This code does not break real Bitcoin keys on current IBM Quantum hardware — the quantum resources required are far beyond current capabilities.
+The code implements a simplified QPE oracle that encodes the private key as a phase rotation, not full elliptic curve arithmetic on quantum registers (which is extremely complex).
+The elliptic curve arithmetic functions are classical and used here only for verification.
+You must replace 'YOUR_IBM_QUANTUM_TOKEN_HERE' with your IBM Quantum API token.
+The number of qubits is set to cover the 17-bit keyspace (18 qubits counting register + 1 target qubit), which is too large for current hardware but shown here for completeness.
+For practical runs, reduce num_qubits drastically or simulate on classical simulators.
+Full Code
+python
+
+: # Assembling the circuit into a Qobj.../content/01.py:400: DeprecationWarning: The function ``qiskit.compiler.assembler.assemble()`` is deprecated as of qiskit 1.2. It will be removed in the 2.0 release.
+# The `Qobj` class and related functionality are part of the deprecated `BackendV1` workflow,  and no longer necessary for `BackendV2`. If a user workflow requires `Qobj` it likely relies on deprecated functionality and should be updated to use `BackendV2`. qobj = assemble(transpiled_circuit) Qobj assembled successfully.
+#import qctrl
+#import qctrlvisualizer as qv
+#import fireopal as fo
+#import boulderopal as bo
+#from qctrl import QAQA, QPE, QEC
+import numpy as np
+from qiskit import transpile
+from qiskit.visualization import plot_histogram, plot_distribution
+from qiskit import QuantumCircuit, transpile
+from qiskit_ibm_runtime import QiskitRuntimeService, Sampler, Options
+from qiskit.circuit.library import QFT
+from qiskit.circuit import QuantumRegister, ClassicalRegister
+import numpy as np
+from fractions import Fraction
+from math import gcd
+import logging
+from collections import Counter
+from qiskit.circuit.controlflow.break_loop import BreakLoopPlaceholder
+from qiskit.circuit.library import ZGate, MCXGate
+from collections import Counter
+from Crypto.Hash import RIPEMD160, SHA256  # Import from pycryptodome
+from ecdsa import SigningKey, SECP256k1
+from qiskit.quantum_info import PauliList, SparsePauliOp, Statevector, Operator
+from qiskit.circuit import Parameter
+#from qiskit_aer.primitives import SamplerV2  # for simulator
+#from qiskit_ibm_runtime import SamplerV2 as real_sampler  # for hardware
+from qiskit.circuit.library import RYGate
+#from qiskit.providers.ibmq.job import Job
+from Crypto.PublicKey import ECC
+from bitarray import bitarray
+#from qiskit_aer.primitives import SamplerV2  # for simulator
+#from qiskit_ibm_runtime import SamplerV2 as real_sampler  # for hardware
+#from qiskit_algorithms.optimizers import AmplificationProblem, CustomCircuitOracle
+from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
+from qiskit_aer import AerSimulator, Aer
+from qiskit_ibm_runtime import Estimator
+from qiskit.circuit.library import RYGate, GroverOperator
+from math import ceil, log2
+#from qiskit.providers.ibmq import IBMQ
+import matplotlib.pyplot as plt
+from qiskit import QuantumRegister, ClassicalRegister, AncillaRegister
+import numpy as np
+import random
+import time
+import hashlib
+import base58
+import math
+#from qctrlcommons.preconditions import check_argument_integer
+# Setup Fire-Opal
+#bo.cloud.set_organization("aimen-eldjoundi-gmail")
+#bo.authenticate_qctrl_account("ZGmK5goCNAKxiOfFCMJZbShiX7jk8llgKGBVASGSerYNYE131L")
+#bo.cloud.request_machines(1)
+#fo.config.configure_organization(organization_slug="aimen-eldjoundi-gmail")
+#fo.authenticate_qctrl_account("ZGmK5goCNAKxiOfFCMJZbShiX7jk8llgKGBVASGSerYNYE131L")
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Load IBM Quantum account (replace with your token)
+QiskitRuntimeService.save_account(
+    channel='ibm_quantum',
+    token='29e1878ddfb11fd8422a7c7c2f07521420b73988a7b1bd610b81758122de534d90abdb90466b747d81c43aea6c81147d89de8c551e24d4a30f584419e96e3659',  # Replace with your IBM Quantum token
+    instance='ibm-q/open/main',
+    overwrite=True,
+    set_as_default=True
+)
+
+# Load the service
+service = QiskitRuntimeService()
+backend = service.backend("ibm_brisbane")
+
+
+import numpy as np
+from qiskit import QuantumCircuit, transpile
+from qiskit.circuit.library import QFT
+from qiskit_ibm_runtime import QiskitRuntimeService, Sampler
+from qiskit.visualization import plot_histogram
+import matplotlib.pyplot as plt
+
+# --- secp256k1 curve parameters (Bitcoin curve) ---
+p = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F
+a = 0
+b = 7
+Gx = 55066263022277343669578718895168534326250603453777594175500187360389116729240
+Gy = 32670510020758816978083085130507043184471273380659243275938904335757337482424
+G = (Gx, Gy)
+N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141  # order of G
+
+# Given compressed public key (hex string)
+public_key_hex = "033f688bae8321b8e02b7e6c0a55c2515fb25ab97d85fda842449f7bfa04e128c3"
+
+# Range for private key search (17-bit range)
+min_range = 0x100000
+max_range = 0x1FFFFF
+keyspace_size = max_range - min_range + 1
+
+# Number of counting qubits for QPE (ceil(log2(keyspace_size)) + 1 for safety)
+num_qubits = int(np.ceil(np.log2(keyspace_size))) + 1
+
+# --- Elliptic curve arithmetic functions (classical) ---
+
+def mod_inverse(k, p):
+    """Modular inverse using Extended Euclidean Algorithm."""
+    if k == 0:
+        raise ZeroDivisionError('division by zero')
+    return pow(k, p - 2, p)
+
+def point_addition(P, Q):
+    """Add two points P and Q on the elliptic curve."""
+    if P is None:
+        return Q
+    if Q is None:
+        return P
+    (x1, y1) = P
+    (x2, y2) = Q
+    if x1 == x2 and (y1 + y2) % p == 0:
+        return None  # Point at infinity
+    if P == Q:
+        # Point doubling
+        m = (3 * x1 * x1 + a) * mod_inverse(2 * y1, p) % p
+    else:
+        m = (y2 - y1) * mod_inverse(x2 - x1, p) % p
+    x3 = (m * m - x1 - x2) % p
+    y3 = (m * (x1 - x3) - y1) % p
+    return (x3, y3)
+
+def scalar_multiplication(k, P):
+    """Multiply point P by scalar k on the elliptic curve."""
+    R = None
+    Q = P
+    while k > 0:
+        if k & 1:
+            R = point_addition(R, Q)
+        Q = point_addition(Q, Q)
+        k >>= 1
+    return R
+
+def decompress_public_key(pubkey_hex):
+    """Decompress compressed public key to (x,y) point."""
+    prefix = pubkey_hex[:2]
+    x = int(pubkey_hex[2:], 16)
+    # y^2 = x^3 + 7 mod p
+    alpha = (pow(x, 3, p) + b) % p
+    beta = pow(alpha, (p + 1) // 4, p)  # sqrt mod p since p % 4 == 3
+    if (beta % 2 == 0 and prefix == '02') or (beta % 2 == 1 and prefix == '03'):
+        y = beta
+    else:
+        y = p - beta
+    return (x, y)
+
+# Decompress given public key
+public_key_point = decompress_public_key(public_key_hex)
+
+# --- Quantum Phase Estimation Oracle ---
+
+# For demonstration, we encode the private key as a phase theta = private_key / keyspace_size
+# In reality, the oracle would perform elliptic curve multiplication and compare to public key (very complex)
+
+# Let's assume the secret private key is unknown but in the range min_range..max_range
+# For demonstration, pick a secret private key in range (you can change this)
+secret_private_key = 0x123456  # Example 17-bit private key in range
+
+def apply_controlled_unitary(qc, control_qubit, target_qubit, power):
+    """Apply controlled phase rotation U^{2^power} for QPE."""
+    # Calculate phase angle = 2*pi * secret_private_key * 2^power / keyspace_size
+    angle = 2 * np.pi * secret_private_key * (2 ** power) / keyspace_size
+    qc.cu1(angle, control_qubit, target_qubit)
+
+def quantum_phase_estimation(num_qubits):
+    """Build QPE circuit to estimate phase = secret_private_key / keyspace_size."""
+    qc = QuantumCircuit(num_qubits + 1, num_qubits)
+
+    # Apply Hadamard gates to counting register
+    for q in range(num_qubits):
+        qc.h(q)
+
+    # Prepare eigenstate |1> on target qubit
+    qc.x(num_qubits)
+
+    # Apply controlled unitary operations
+    for q in range(num_qubits):
+        apply_controlled_unitary(qc, q, num_qubits, num_qubits - q - 1)
+
+    # Apply inverse QFT on counting register
+    qc.append(QFT(num_qubits, inverse=True, do_swaps=True), range(num_qubits))
+
+    # Measure counting register
+    qc.measure(range(num_qubits), range(num_qubits))
+
+    return qc
+
+def run_circuit_on_ibm(qc, backend_name="ibm_brisbane", shots=1024):
+    # Save your IBM Quantum account token here
+    QiskitRuntimeService.save_account(
+        channel='ibm_quantum',
+        token='YOUR_IBM_QUANTUM_TOKEN_HERE',  # Replace with your token
+        instance='ibm-q/open/main',
+        overwrite=True,
+        set_as_default=True
+    )
+    service = QiskitRuntimeService()
+    backend = service.backend(backend_name)
+
+    print(f"Running on backend: {backend.name}")
+
+    transpiled_qc = transpile(qc, backend=backend, optimization_level=3)
+    sampler = Sampler(backend=backend)
+
+    job = sampler.run([transpiled_qc], shots=shots)
+    print(f"Job submitted with ID: {job.job_id()}")
+
+    result = job.result()
+    counts = result[0].data.c.get_counts()
+    return counts
+
+def main():
+    print(f"Private key search range: {hex(min_range)} to {hex(max_range)}")
+    print(f"Number of counting qubits: {num_qubits}")
+    print(f"Secret private key (unknown to attacker): {hex(secret_private_key)}")
+    print(f"Given public key point (x,y):\n{public_key_point}")
+
+    qc = quantum_phase_estimation(num_qubits)
+    print("Quantum circuit:")
+    print(qc.draw(fold=-1))
+
+    counts = run_circuit_on_ibm(qc, shots=2048)
+    print("Measurement results:")
+    print(counts)
+
+    plot_histogram(counts)
+    plt.show()
+
+    # Post-processing: find the most frequent measurement and estimate phase
+    max_key = max(counts, key=counts.get)
+    measured_int = int(max_key, 2)
+    estimated_phase = measured_int / (2 ** num_qubits)
+    estimated_private_key = round(estimated_phase * keyspace_size) + min_range
+
+    print(f"Estimated phase: {estimated_phase}")
+    print(f"Estimated private key (approx): {hex(estimated_private_key)}")
+    print(f"Actual private key: {hex(secret_private_key)}")
+
+if __name__ == "__main__":
+    main()
+
+Explanation
+Elliptic curve parameters are set to secp256k1 (Bitcoin's curve).
+The public key is decompressed from the compressed hex string to (x,y).
+The private key search range is set to your 17-bit range (0x10000 to 0x1FFFFF).
+The quantum phase estimation circuit encodes the secret private key as a phase rotation.
+The oracle is a simplified phase rotation; no quantum elliptic curve arithmetic is performed.
+The circuit is run on IBM Quantum hardware or simulator via the IBM Runtime Service.
+The result is post-processed to estimate the private key.
+How to Use
+Install required packages if you haven't:
+bash
+
+
+pip install qiskit qiskit-ibm-runtime matplotlib numpy
+Replace 'YOUR_IBM_QUANTUM_TOKEN_HERE' with your IBM Quantum API token.
+Run the script.
+Final Notes
+This code is a conceptual demonstration and cannot break real Bitcoin keys today.
+Full quantum attacks on Bitcoin private keys require large-scale fault-tolerant quantum computers and complex quantum elliptic curve arithmetic circuits.
+You can reduce num_qubits to run on simulators or small devices for testing.
+Feel free to ask if you want help building more realistic or optimized quantum oracles for elliptic curve problems!
+
+def main():
+
+    # Define your constants and parameters
+    min_range = 0x10000
+    max_range = 0x1FFFF
+    num_qubits = int(np.ceil(np.log2(max_range))) + 1
+    target_address = "1HduPEXZRdG26SUT5Yk83mLkPyjnZuJ7Bm"
+    public_key_x_hex = "0x6ef0691fa9edd5a21e6be331d5c4aa21c18a520d"
+    public_key_hash = "b67cb6edeabc0c8b927c9ea327628e7aa63e2d52"
+    public_key_hex = "033f688bae8321b8e02b7e6c0a55c2515fb25ab97d85fda842449f7bfa04e128c3"
+    keyspace_size = max_range - min_range + 1
+    quantum_registers = 20
+    num_shots = 8192
+
+    print(f"Calculated keyspace size: {keyspace_size}")
+    print(f"Number of Qubits: {num_qubits}")
+    print(f"Calculated iterations: {int(np.sqrt(float(max_range - min_range)))}")
+
+    x_Q = int(public_key_x_hex, 16)
+    p = int(public_key_hex, 16)
+    results = []
+
+    print(f"\nInitializing circuit with {num_qubits} qubits...")
+    qc = quantum_circuit(num_qubits, G[0], G[1], x_Q, p)
+
+    print("Quantum Circuit Details:")
+    print(qc)
+    print(f"Circuit Depth: {qc.depth()}, Circuit Size: {qc.size()}")
+
+    service = QiskitRuntimeService()
+    backend = service.backend('ibm_brisbane')
+    print(f"Selected backend: {backend}")
+
+    print("Transpiling the quantum circuit...")
+    transpiled_circuit = transpile(qc, backend=backend, optimization_level=3)
+    print(f"Transpiled circuit depth: {transpiled_circuit.depth()}")
+
+    print("Assembling the circuit into a Qobj...")
+    print("Qobj assembled successfully.")
+
+    print("Submitting the job to the backend...")
+    sampler = Sampler(backend)
+    job = sampler.run([transpiled_circuit], shots=8192)
+    job_id = job.job_id()
+    print(f"Job submitted. Job ID: {job_id}")
+    print("Waiting for results...")
+
+    result = job.result()
+    counts = result[0].data.c.get_counts()
+
+    print("Measurement Results:")
+    print(counts)
+
+    if not counts:
+        print("No results returned from the quantum circuit!")
+        return None
+
+    print(f"Dominant measurement: {max(counts, key=counts.get)} with {counts[max(counts, key=counts.get)]} counts")
+
+    counts_int = {
+        bin(int(k))[2:].zfill(num_qubits): int(v * num_shots)
+        for k, v in counts.items()
+    }
+    results.append(counts_int)
+
+    period = majority_vote(results, num_qubits)
+    if period:
+        padded_key = hex(period)[2:].zfill(64)
+        if verify_private_key(period, public_key_hex):
+            print(f"Found private key: {padded_key}")
+            return period
+        else:
+            print(f"Incorrect key after voting: {padded_key}")
+    else:
+        print("No valid period found.")
+
+    print("Plotting result distributions...")
+    plot_distribution(counts, legend=["IBM Sherbrooke - Quantum ECDLP Solver"])
+    plot_histogram(counts)
+    plt.show()
+
+    found_key, compressed_address = retrieve_job_result(job_id, target_address, quantum_registers)
+
+    if found_key:
+        print("\nSUCCESS! Private key:")
+        print(f"Found matching private key: {found_key}")
+        print(f"HEX: {hex(found_key)}")
+        print(f"DEC: {found_key}")
+        with open("boom.txt", "w") as file:
+            file.write("Measurement Results:\n")
+            for bitstring, count in counts.items():
+                file.write(f"{bitstring}: {count}\n")
+        print("Results saved to boom.txt")
+    else:
+        print("No valid key found.")
+
+    private_key = int(max(counts, key=counts.get), 2)
+    print(f"Private Key Found: {private_key}")
+
+    computed_x, _ = scalar_multiplication(private_key, G[0], G[1], p)
+    if computed_x == x_Q:
+        print("Private Key Verified Successfully!")
+        with open("boom.txt", "w") as file:
+            file.write(f"Private Key: {private_key}\n")
+            file.write(f"HEX: {hex(private_key)}\n")
+            file.write(f"DEC: {private_key}\n")
+        print("Private key saved to boom.txt")
+    else:
+        print("Private Key Verification Failed.")
+
+    return None
+
+if __name__ == "__main__":
+    main()
+ 

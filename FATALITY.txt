@@ -1,0 +1,131 @@
+import numpy as np
+import secrets
+from qiskit import QuantumCircuit, transpile
+from qiskit.circuit.library import QFT
+from qiskit_ibm_runtime import QiskitRuntimeService, Sampler
+from qiskit.visualization import plot_histogram
+import matplotlib.pyplot as plt
+
+# --- secp256k1 curve parameters (Bitcoin curve) ---
+p = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F
+a = 0
+b = 7
+Gx = 55066263022277343669578718895168534326250603453777594175500187360389116729240
+Gy = 32670510020758816978083085130507043184471273380659243275938904335757337482424
+G = (Gx, Gy)
+N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141  # order of G
+
+# Given compressed public key (hex string)
+public_key_hex = "033f688bae8321b8e02b7e6c0a55c2515fb25ab97d85fda842449f7bfa04e128c3"
+
+# Private key search range (17-bit range)
+min_range = 0x10000
+max_range = 0x1FFFF
+keyspace_size = max_range - min_range + 1
+
+# Number of counting qubits for QPE (ceil(log2(keyspace_size)) + 1 for safety)
+num_qubits = int(np.ceil(np.log2(keyspace_size))) + 1
+
+# Set to an int within range for reproducible runs, or None for random
+secret_private_key = None  # e.g., 0x1764f or None
+
+def get_secret():
+    """
+    Returns the secret private key.
+    If secret_private_key is None, generates a cryptographically secure random secret in range.
+    """
+    if secret_private_key is None:
+        secret = min_range + secrets.randbelow(keyspace_size)
+        print(f"[INFO] Generated random secret_private_key: {hex(secret)}")
+        return secret
+    else:
+        if not (min_range <= secret_private_key <= max_range):
+            raise ValueError("secret_private_key (if set) must be within min_range..max_range")
+        print(f"[INFO] Using fixed secret_private_key: {hex(secret_private_key)}")
+        return secret_private_key
+
+def apply_controlled_unitary(qc, control_qubit, target_qubit, power, secret):
+    """
+    Apply controlled phase rotation U^{2^power} for QPE.
+    Angle = 2 * pi * secret * 2^power / keyspace_size
+    """
+    angle = 2 * np.pi * secret * (2 ** power) / keyspace_size
+    qc.cp(angle, control_qubit, target_qubit)  # cp is the modern Qiskit gate
+
+def quantum_phase_estimation(num_qubits, secret):
+    """
+    Build QPE circuit to estimate phase = secret / keyspace_size.
+    """
+    qc = QuantumCircuit(num_qubits + 1, num_qubits)
+
+    # Apply Hadamard gates to counting register
+    for q in range(num_qubits):
+        qc.h(q)
+
+    # Prepare eigenstate |1> on target qubit
+    qc.x(num_qubits)
+
+    # Apply controlled unitary operations
+    for q in range(num_qubits):
+        apply_controlled_unitary(qc, q, num_qubits, num_qubits - q - 1, secret)
+
+    # Apply inverse QFT on counting register
+    qc.append(QFT(num_qubits, inverse=True, do_swaps=True), range(num_qubits))
+
+    # Measure counting register
+    qc.measure(range(num_qubits), range(num_qubits))
+
+    return qc
+
+def run_circuit_on_ibm(qc, backend_name="ibm_brisbane", shots=1024):
+    # Save your IBM Quantum account token here
+    QiskitRuntimeService.save_account(
+        channel='ibm_quantum',
+        token='YOUR_IBM_QUANTUM_TOKEN_HERE',  # Replace with your token
+        instance='ibm-q/open/main',
+        overwrite=True,
+        set_as_default=True
+    )
+    service = QiskitRuntimeService()
+    backend = service.backend(backend_name)
+
+    print(f"[INFO] Running on backend: {backend.name}")
+
+    transpiled_qc = transpile(qc, backend=backend, optimization_level=3)
+    sampler = Sampler(backend=backend)
+
+    job = sampler.run([transpiled_qc], shots=shots)
+    print(f"[INFO] Job submitted with ID: {job.job_id()}")
+
+    result = job.result()
+    counts = result[0].data.c.get_counts()
+    return counts
+
+def main():
+    print(f"Private key search range: {hex(min_range)} to {hex(max_range)}")
+    print(f"Number of counting qubits: {num_qubits}")
+
+    qc = quantum_phase_estimation(num_qubits, secret)
+    print("Quantum circuit:")
+    print(qc.draw(fold=-1))
+
+    # Uncomment the following line to run on IBM Quantum hardware
+    counts = run_circuit_on_ibm(qc, shots=2048)
+
+    print("Measurement results:")
+    print(counts)
+
+    plot_histogram(counts)
+    plt.show()
+
+    # Post-processing: find the most frequent measurement and estimate phase
+    max_key = max(counts, key=counts.get)
+    measured_int = int(max_key, 2)
+    estimated_phase = measured_int / (2 ** num_qubits)
+    estimated_private_key = round(estimated_phase * keyspace_size) + min_range
+
+    print(f"Estimated phase: {estimated_phase}")
+    print(f"Estimated private key (approx): {hex(estimated_private_key)}")
+
+if __name__ == "__main__":
+    main()

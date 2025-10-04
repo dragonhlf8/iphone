@@ -1,0 +1,174 @@
+📝 Full Python Code: Quantum ECDLP Attack (Toy Example)
+python
+
+
+import numpy as np
+from math import sqrt
+from fractions import Fraction
+
+# --- Quantum Simulator (simplified for demonstration) ---
+class QuantumSimulator:
+    def __init__(self, n_qubits):
+        self.n_qubits = n_qubits
+        self.n_states = 2**n_qubits
+        self.state = np.zeros(self.n_states, dtype=complex)
+        self.state[0] = 1.0
+
+    def hadamard_all(self):
+        self.state = np.ones(self.n_states, dtype=complex) / sqrt(self.n_states)
+
+    def apply_oracle(self, f_function):
+        new_state = np.zeros_like(self.state)
+        for i in range(self.n_states):
+            phase = f_function(i)
+            new_state[i] = self.state[i] * np.exp(2j * np.pi * phase)
+        self.state = new_state
+
+    def qft(self):
+        dft_matrix = np.fft.fft(np.eye(self.n_states)) / sqrt(self.n_states)
+        self.state = dft_matrix @ self.state
+
+    def measure(self, shots=1000):
+        probabilities = np.abs(self.state)**2
+        return np.random.choice(self.n_states, size=shots, p=probabilities)
+
+# --- Elliptic Curve Arithmetic (toy curve) ---
+class EllipticCurve:
+    def __init__(self, a, b, p):
+        self.a = a
+        self.b = b
+        self.p = p
+
+    def is_on_curve(self, point):
+        if point is None: return True
+        x, y = point
+        return (y**2) % self.p == (x**3 + self.a*x + self.b) % self.p
+
+    def point_add(self, P1, P2):
+        if P1 is None: return P2
+        if P2 is None: return P1
+        x1, y1 = P1
+        x2, y2 = P2
+        if x1 == x2:
+            if y1 == y2:
+                if y1 == 0: return None
+                s = (3*x1**2 + self.a) * pow(2*y1, -1, self.p) % self.p
+            else:
+                return None
+        else:
+            s = (y2 - y1) * pow(x2 - x1, -1, self.p) % self.p
+        x3 = (s**2 - x1 - x2) % self.p
+        y3 = (s*(x1 - x3) - y1) % self.p
+        return (x3, y3)
+
+    def scalar_mult(self, k, point):
+        if k == 0 or point is None: return None
+        result = None
+        addend = point
+        while k:
+            if k & 1:
+                result = self.point_add(result, addend)
+            addend = self.point_add(addend, addend)
+            k >>= 1
+        return result
+
+    def find_order(self, point, max_check=100):
+        current = point
+        for i in range(1, max_check + 1):
+            if current is None: return i
+            current = self.point_add(current, point)
+        return None
+
+def extended_gcd(a, b):
+    if a == 0: return b, 0, 1
+    g, x1, y1 = extended_gcd(b % a, a)
+    x = y1 - (b // a) * x1
+    y = x1
+    return g, x, y
+
+# --- Setup toy curve and keys ---
+curve = EllipticCurve(a=2, b=2, p=17)
+# Find a base point
+for x in range(curve.p):
+    for y in range(curve.p):
+        if curve.is_on_curve((x, y)):
+            base_point = (x, y)
+            break
+    if 'base_point' in locals(): break
+
+private_key = 7
+public_key = curve.scalar_mult(private_key, base_point)
+print(f"Base point G: {base_point}")
+print(f"Private key (secret): {private_key}")
+print(f"Public key: {public_key}")
+
+# --- Quantum ECDLP Algorithm ---
+n_qubits = 4  # 4 bits for a, 4 bits for b
+qsim = QuantumSimulator(2 * n_qubits)
+qsim.hadamard_all()
+
+def F_function(ab_combined):
+    a = ab_combined >> n_qubits
+    b = ab_combined & ((1 << n_qubits) - 1)
+    point_aG = curve.scalar_mult(a, base_point)
+    point_bP = curve.scalar_mult(b, public_key)
+    if point_bP is not None:
+        neg_bP = (point_bP[0], (-point_bP[1]) % curve.p)
+    else:
+        neg_bP = None
+    result_point = curve.point_add(point_aG, neg_bP)
+    if result_point is None:
+        return 0.0
+    else:
+        return result_point[0] / curve.p
+
+qsim.apply_oracle(F_function)
+qsim.qft()
+measurements = qsim.measure(shots=2000)
+unique, counts = np.unique(measurements, return_counts=True)
+sorted_indices = np.argsort(counts)[::-1]
+best = unique[sorted_indices[0]]
+measured_a = best >> n_qubits
+measured_b = best & ((1 << n_qubits) - 1)
+print(f"Top measurement: (a={measured_a}, b={measured_b})")
+
+# --- Classical Post-Processing ---
+order = curve.find_order(base_point)
+if measured_b != 0:
+    g, x, y = extended_gcd(measured_b, order)
+    if g == 1:
+        b_inv = x % order
+        candidate_key = (measured_a * b_inv) % order
+        print(f"Candidate private key: {candidate_key}")
+        if curve.scalar_mult(candidate_key, base_point) == public_key:
+            print("✓ SUCCESS: Private key recovered!")
+        else:
+            print("✗ Verification failed")
+    else:
+        print("Cannot invert b mod order")
+else:
+    print("b=0, cannot extract key")
+
+------------------------
+📚 How This Code Relates to the IBM 5-bit ECC Experiment
+Implements the exact quantum algorithm described in your documentation:
+Prepares a quantum superposition over all (a, b) pairs.
+Applies a quantum oracle for 
+F
+(
+a
+,
+b
+)
+=
+a
+G
+−
+b
+P
+F(a,b)=aG−bP
+.
+Uses the Quantum Fourier Transform (QFT) to extract the period.
+Measures and uses the Extended Euclidean Algorithm to recover the private key.
+Works only for tiny, toy curves (like the IBM experiment).
+Cannot break real Bitcoin or ECDSA keys.

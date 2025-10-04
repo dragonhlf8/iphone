@@ -1,0 +1,138 @@
+import numpy as np
+
+# secp256k1 parameters
+p = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F
+a = 0
+b = 7
+Gx = 55066263022277343669578718895168534326250603453777594175500187360389116729240
+Gy = 32670510020758816978083085130507043184471273380659243275938904335757337482424
+G = (Gx, Gy)
+N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+
+# EC Point functions
+def modinv(a, m=p):
+    return pow(a, -1, m)
+
+def is_inf(P):
+    return P == (None, None)
+
+def point_add(P, Q):
+    if is_inf(P): return Q
+    if is_inf(Q): return P
+    x1, y1 = P
+    x2, y2 = Q
+    if x1 == x2 and y1 != y2:
+        return (None, None)
+    if P == Q:
+        return point_double(P)
+    m = ((y2 - y1) * modinv(x2 - x1)) % p
+    x3 = (m * m - x1 - x2) % p
+    y3 = (m * (x1 - x3) - y1) % p
+    return (x3, y3)
+
+def point_double(P):
+    if is_inf(P): return (None, None)
+    x, y = P
+    m = ((3 * x * x + a) * modinv(2 * y)) % p
+    x3 = (m * m - 2 * x) % p
+    y3 = (m * (x - x3) - y) % p
+    return (x3, y3)
+
+def scalar_mult(k, P):
+    R = (None, None)
+    while k > 0:
+        if k & 1:
+            R = point_add(R, P)
+        P = point_double(P)
+        k >>= 1
+    return R
+
+def decompress_pubkey(pubkey_hex):
+    prefix = pubkey_hex[:2]
+    x = int(pubkey_hex[2:], 16)
+    y_square = (x**3 + 7) % p
+    y = pow(y_square, (p + 1) // 4, p)
+    if (y % 2 == 0 and prefix == '02') or (y % 2 == 1 and prefix == '03'):
+        return (x, y)
+    else:
+        return (x, p - y)
+
+def oracle(qc, target_qubit, counting_qubits, public_key_point, min_range):
+
+
+
+def quantum_phase_estimation(num_qubits, public_key_point, min_range):
+    qc = QuantumCircuit(num_qubits + 1, num_qubits)
+    counting_qubits = list(range(num_qubits))
+    target_qubit = num_qubits
+
+    # Hadamard on counting qubits
+    for q in counting_qubits:
+        qc.h(q)
+    
+    # Init target qubit
+    qc.x(target_qubit)
+
+    # Apply controlled oracle U^{2^j}
+    for j in range(num_qubits):
+        # Apply U^{2^j} (simulate via dummy oracle)
+        for _ in range(2 ** j):
+            oracle(qc, target_qubit, counting_qubits, public_key_point, min_range)
+
+    # Inverse QFT
+    qc.append(QFT(num_qubits, do_swaps=True, inverse=True), counting_qubits)
+    qc.measure(counting_qubits, counting_qubits)
+    return qc
+
+def run_on_ibm(qc, backend_name="ibm_perth", shots=2048):
+    QiskitRuntimeService.save_account(
+        channel='ibm_quantum',
+        token='YOUR_IBM_TOKEN',  # Replace
+        instance='ibm-q/open/main',
+        overwrite=True,
+        set_as_default=True
+    )
+    service = QiskitRuntimeService()
+    backend = service.backend(backend_name)
+    print(f"[INFO] Running on backend: {backend.name}")
+    transpiled_qc = transpile(qc, backend=backend, optimization_level=3)
+    sampler = Sampler(backend=backend)
+    job = sampler.run([transpiled_qc], shots=shots)
+    print(f"[INFO] Job submitted with ID: {job.job_id()}")
+    result = job.result()
+    counts = result[0].data.c.get_counts()
+    return counts
+
+def main():
+    # Parameters
+    public_key_hex = "033f688bae8321b8e02b7e6c0a55c2515fb25ab97d85fda842449f7bfa04e128c3"
+    min_range = 0x10000
+    max_range = 0x1FFFF
+    keyspace_size = max_range - min_range + 1
+    num_qubits = int(np.ceil(np.log2(keyspace_size))) + 1
+
+    print(f"Private key search range: {hex(min_range)} to {hex(max_range)}")
+    print(f"Counting qubits: {num_qubits}")
+
+    public_key_point = decompress_pubkey(public_key_hex)
+
+    qc = quantum_phase_estimation(num_qubits, public_key_point, min_range)
+    print(qc.draw(fold=-1))
+
+    counts = run_on_ibm(qc, shots=2048)
+
+    print("Results:", counts)
+    plot_histogram(counts)
+    plt.show()
+
+    # Post-processing
+    max_bin = max(counts, key=counts.get)
+    measured_int = int(max_bin, 2)
+    estimated_phase = measured_int / (2 ** num_qubits)
+    estimated_private_key = round(estimated_phase * keyspace_size) + min_range
+
+    print(f"Estimated phase: {estimated_phase}")
+    print(f"Estimated private key (approx): {hex(estimated_private_key)}")
+
+if __name__ == "__main__":
+    main()

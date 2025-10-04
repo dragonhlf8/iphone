@@ -1,0 +1,23 @@
+Great question! When I mentioned "adjusting parameters" in the quantum code context, I was referring to the key variables and settings in the code that you might want to change depending on your specific use case or hardware constraints. These are not fixed and can be tuned to fit your needs or the capabilities of the quantum device or simulator you are using.
+Here are the main parameters you might consider adjusting:
+secret_private_key
+This is the actual private key value encoded as a phase in the simplified oracle.
+You can change this to any integer within your keyspace range to simulate different secret keys.
+min_range and max_range
+Define the range of private keys you want to consider (your keyspace).
+Adjusting these changes the size of the keyspace and thus the number of qubits needed.
+num_qubits
+Number of counting qubits used in the Quantum Phase Estimation circuit.
+It is calculated based on the size of the keyspace (keyspace_size).
+You can reduce this number to fit smaller hardware or simulators, but it reduces precision.
+shots in run_circuit_on_ibm
+Number of times the quantum circuit is executed to gather statistics.
+More shots give better statistics but take longer to run.
+backend_name
+The IBM Quantum backend you want to run the circuit on (e.g., "ibm_brisbane").
+You can change this to any available backend or simulator.
+Why Adjust These?
+Hardware limitations: Real quantum devices have limited qubits and gate depth. You might need to reduce num_qubits or keyspace size accordingly.
+Simulation speed: Smaller circuits run faster on simulators.
+Experimentation: Changing the secret key lets you test the algorithm with different inputs.
+Precision vs. resources: More qubits mean better phase estimation precision but require more resources.
